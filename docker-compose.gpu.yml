@@ -6,10 +6,16 @@ services:
       context: .
       dockerfile: ./docker/Dockerfile.gpu
     tty: true
+    stdin_open: true
     volumes:
       - ./data/:/app/data
       - ./notebooks/:/app/notebooks
       - ./scripts/:/app/scripts
+      - ~/pycharm:/app/pycharm
+      - ~/.config/JetBrains:/app/.config/JetBrains
+      - ~/.local/share/JetBrains:/app/.local/share/JetBrains
+      - ~/.java/.userPrefs/jetbrains:/app/.java/.userPrefs/jetbrains
+      - ~/.cache/JetBrains:/app:/.cache/JetBrains
     deploy:
       resources:
         reservations:
@@ -23,4 +29,5 @@ services:
     env_file:
      - ./.env
     entrypoint: jupyter lab --ip 0.0.0.0 --port=$JUPYTER_PORT --no-browser --allow-root
+       #entrypoint: /bin/sh
     

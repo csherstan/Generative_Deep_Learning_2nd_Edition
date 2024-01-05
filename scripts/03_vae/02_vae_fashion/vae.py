@@ -50,8 +50,8 @@ def make_encoder(output_size: int):
                     )
     conv_output_shape = x.shape[1:]
     x = layers.Flatten()(x)
-    z_mean = layers.Dense(2, name="z_mean")(x)
-    z_log_var = layers.Dense(2, name="z_log_var")(x)
+    z_mean = layers.Dense(output_size, name="z_mean")(x)
+    z_log_var = layers.Dense(output_size, name="z_log_var")(x)
     z = SamplingLayer()([z_mean, z_log_var])
     return models.Model(encoder_input, {"mean": z_mean, "log_var": z_log_var, "z": z},
                         name="encoder"), conv_output_shape

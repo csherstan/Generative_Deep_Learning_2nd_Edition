@@ -1,7 +1,7 @@
 from typing import Sequence, Tuple, Generator, Callable, List, Optional, Union
 
 import jax
-from jax import numpy as jnp
+from jax import numpy as jnp, Array
 from keras_core import layers, models, Layer
 
 
@@ -69,8 +69,13 @@ def preprocess_mnist(imgs: jnp.ndarray) -> jnp.ndarray:
     return imgs
 
 
-def rng_seq(seed: int) -> Generator[jax.Array, None, None]:
-    key = jax.random.PRNGKey(seed)
+def rng_seq(*, key: Array=None, seed: int=None) -> Generator[jax.Array, None, None]:
+    if key is None:
+        assert seed is not None
+        key = jax.random.PRNGKey(seed)
+
+    assert len(key) == 2
+
     while True:
         key, subkey = jax.random.split(key)
         yield subkey

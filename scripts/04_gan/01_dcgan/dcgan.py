@@ -3,7 +3,7 @@ from typing import Tuple, cast
 
 os.environ["KERAS_BACKEND"] = "jax"
 
-from scripts.common import conv_layers, deconv_layers
+from scripts.common_keras import conv_layers, deconv_layers
 
 import keras_core as K
 from keras_core import layers, models, datasets, losses, metrics, utils, Layer, optimizers, StatelessScope

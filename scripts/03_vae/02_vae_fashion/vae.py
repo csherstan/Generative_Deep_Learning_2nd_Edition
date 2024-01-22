@@ -7,7 +7,8 @@ import time
 from typing import Tuple
 
 from notebooks.utils import display
-from scripts.common import conv_layers, preprocess_mnist, make_deconv_decoder, rng_seq
+from scripts.common import preprocess_mnist, rng_seq
+from scripts.common_keras import conv_layers, make_deconv_decoder
 
 import keras_core as K
 from keras_core import layers, models, datasets, losses, metrics

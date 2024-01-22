@@ -4,7 +4,8 @@ import time
 import os
 
 from notebooks.utils import display
-from scripts.common import conv_layers, preprocess_mnist, rng_seq, make_deconv_decoder
+from scripts.common import preprocess_mnist, rng_seq
+from scripts.common_keras import conv_layers, make_deconv_decoder
 
 os.environ["KERAS_BACKEND"] = "jax"
 import keras_core as K

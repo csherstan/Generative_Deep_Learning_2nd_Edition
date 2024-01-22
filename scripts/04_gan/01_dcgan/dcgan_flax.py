@@ -3,7 +3,7 @@ import shutil
 import time
 from functools import partial
 from pathlib import Path
-from typing import Sequence, Union, Tuple, Optional, Callable, Any, Dict
+from typing import Tuple, Any, Dict
 
 import os
 
@@ -16,7 +16,6 @@ import tensorflow as tf
 from flax.training import train_state
 from jax import jit
 from jax._src.basearray import ArrayLike, Array
-from tensorflow.python.ops.gen_dataset_ops import iterator
 from tqdm import trange
 
 from keras import utils
@@ -24,76 +23,12 @@ import jax
 import jax.numpy as jnp
 from flax import linen as nn
 
-from scripts.common import rng_seq
+from scripts.common import rng_seq, conv_layers, deconv_layers
 import tensorflow_datasets as tfds
 
 
 class TrainState(train_state.TrainState):
   batch_stats: Any
-
-
-def deconv_layers(
-  x: Array,
-  filters: Sequence[int],
-  kernel_sizes: Sequence[Union[Tuple[int, int], int]],
-  strides: Sequence[int],
-  activations: Sequence[Optional[nn.Module]],
-  paddings: Sequence[str],
-  use_biases: Optional[Sequence[bool]] = None,
-  post_op_cbs: Optional[Sequence[Callable[[ArrayLike], ArrayLike]]] = None,
-) -> Array:
-  use_biases = use_biases or (True,) * len(filters)
-  post_op_cbs = post_op_cbs or (None,) * len(filters)
-
-  for (filter, kernel_size, stride, activation, padding, use_bias, post_op_cb) in zip(filters, kernel_sizes, strides,
-                                                                                      activations, paddings, use_biases,
-                                                                                      post_op_cbs):
-    x = nn.ConvTranspose(features=filter, kernel_size=(kernel_size, kernel_size), strides=(stride, stride),
-                         padding=padding,
-                         use_bias=use_bias)(x)
-    if activation:
-      x = activation(x)
-
-    if post_op_cb:
-      x = post_op_cb(x)
-
-  return x
-
-
-def conv_layers(
-  x: Array,
-  filters: Sequence[int],
-  kernel_sizes: Sequence[Union[Tuple[int, int], int]],
-  strides: Sequence[int],
-  activations: Sequence[Callable[[ArrayLike], Array]],
-  paddings: Sequence[str],
-  use_biases: Optional[Sequence[bool]] = None,
-  post_op_cbs: Optional[Sequence[Callable[[ArrayLike], ArrayLike]]] = None,
-) -> Array:
-  if use_biases is None:
-    use_biases = (True,) * len(filters)
-
-  if post_op_cbs is None:
-    post_op_cbs = (None,) * len(filters)
-
-  for (filter, kernel_size, stride, activation, padding, use_bias, post_op_cb) in zip(
-    filters, kernel_sizes, strides, activations, paddings, use_biases, post_op_cbs
-  ):
-    x = nn.Conv(
-      features=filter,
-      kernel_size=(kernel_size, kernel_size),
-      strides=(stride, stride),
-      padding=padding,
-      use_bias=use_bias,
-    )(x)
-
-    if activation:
-      x = activation(x)
-
-    if post_op_cb:
-      x = post_op_cb(x)
-
-  return x
 
 
 class Generator(nn.Module):
@@ -112,13 +47,12 @@ class Generator(nn.Module):
                          kernel_sizes=(4,) * 5,
                          strides=(1, 2, 2, 2, 2),
                          paddings=("VALID", "SAME", "SAME", "SAME", "SAME"),
-                         activations=(None, None, None, None, nn.tanh),
                          use_biases=(False,) * 5,
                          post_op_cbs=(post_conv,
                                       post_conv,
                                       post_conv,
                                       post_conv,
-                                      None),
+                                      nn.tanh),
                          )
 
 
@@ -145,32 +79,23 @@ class Discriminator(nn.Module):
                               kernel_sizes=(4,) * 5,
                               strides=(2, 2, 2, 2, 1),
                               paddings=("SAME", "SAME", "SAME", "SAME", "VALID"),
-                              activations=(None, None, None, None, nn.sigmoid),
                               use_biases=(False,) * 5,
                               post_op_cbs=(
                                 activation_dropout,
                                 all,
                                 all,
                                 all,
-                                None
+                                nn.sigmoid
                               ),
                               )
     flattened = jnp.reshape(conv_output, newshape=(-1,))
 
     return flattened
 
-
-# def create_train_state(module: nn.Module, rng, learning_rate: float, momentum: float) -> TrainState:
-#   """Creates an initial `TrainState`."""
-#   params = module.init(rng, jnp.ones([1, 28, 28, 1]))['params']  # initialize parameters by passing a template image
-#   tx = optax.sgd(learning_rate, momentum)
-#   return TrainState.create(apply_fn=module.apply, params=params, tx=tx)
-
-
 @partial(jit, static_argnames=["batch_size", "latent_dim"])
 def generator_train_step(generator_state: TrainState, discriminator_state: TrainState, batch_size: int, latent_dim: int,
                          rng_key: Array):
-  rng_gen = rng_seq(rng_key)
+  rng_gen = rng_seq(key=rng_key)
   latent = jax.random.normal(next(rng_gen), shape=(batch_size, latent_dim))
 
   def loss_fn(generator_params: Dict[str, Any]) -> Tuple[Array, Dict[str, Array]]:
@@ -183,6 +108,8 @@ def generator_train_step(generator_state: TrainState, discriminator_state: Train
       {"params": discriminator_state.params, "batch_stats": discriminator_state.batch_stats}, images=generated_images,
       training=False,
       mutable=["batch_stats"])
+
+    sigmoid_score = jax.lax.stop_gradient(sigmoid_score)
 
     # I think that, because the target is always 1 here, we don't have to worry about log(0) here
     # like we do in other cases. However, in the text they add noise to the labels. I'm not sure how necessary that is.
@@ -210,7 +137,7 @@ def generator_train_step(generator_state: TrainState, discriminator_state: Train
 def discriminator_train_step(generator_state: TrainState, discriminator_state: TrainState, real_images: Array,
                              latent_dim: int, rng_key: Array):
   batch_size = real_images.shape[0]
-  rng_gen = rng_seq(rng_key)
+  rng_gen = rng_seq(key=rng_key)
   latent = jax.random.normal(next(rng_gen), shape=(batch_size, latent_dim))
   generated_images, _ = generator_state.apply_fn(
     {"params": generator_state.params, "batch_stats": generator_state.batch_stats}, latent, mutable=["batch_stats"])
@@ -223,7 +150,7 @@ def discriminator_train_step(generator_state: TrainState, discriminator_state: T
 
   def loss_fn(discriminator_params: Dict[str, Array], images, labels, rng_key: Array) -> \
     Tuple[Array, Dict[str, Array]]:
-    rng_gen = rng_seq(rng_key)
+    rng_gen = rng_seq(key=rng_key)
 
     sigmoid_score, mutables = discriminator_state.apply_fn(
       {"params": discriminator_params, "batch_stats": discriminator_state.batch_stats}, images,
@@ -245,7 +172,7 @@ def discriminator_train_step(generator_state: TrainState, discriminator_state: T
 
 def train_step(generator_state: TrainState, discriminator_state: TrainState, batch: Array, batch_size: int,
                latent_dim: int, rng_key: Array) -> Tuple[TrainState, TrainState, Dict[str, float]]:
-  rng_gen = rng_seq(rng_key)
+  rng_gen = rng_seq(key=rng_key)
   generator_state, generator_loss = generator_train_step(generator_state=generator_state,
                                                          discriminator_state=discriminator_state,
                                                          batch_size=batch_size, latent_dim=latent_dim,
